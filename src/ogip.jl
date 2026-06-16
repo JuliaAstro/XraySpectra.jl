@@ -92,7 +92,7 @@ function parse_hdu(::Type{PHA}, hdu::FITSFiles.HDU; T::Type = Float64)
     SpectrumBase.Spectrum(channels, flux, meta)
 end
 
-function read_rmf(path::String; T::Type = Float64)
+function read_rmf(path::AbstractString; T::Type = Float64)
     (header, rmf, channels::RMFChannels{T}) = _read_fits_and_close(path) do fits
         rmf_index = findfirst(fits) do hdu
             extname = get(hdu.cards, "EXTNAME", "")
@@ -122,7 +122,7 @@ function read_background(path::AbstractString; T::Type = Float64)
 end
 
 function read_spectrum(
-    path::String;
+    path::AbstractString;
     read_response::Bool = true,
     read_ancillary::Bool = true,
     read_background::Bool = false,
@@ -191,7 +191,7 @@ function _read_fits_and_close(f, path)
     f(fits_file)
 end
 
-function read_paths_from_spectrum(path::String)
+function read_paths_from_spectrum(path::AbstractString)
     header = _read_fits_and_close(path) do fits
         fits[2].cards
     end
