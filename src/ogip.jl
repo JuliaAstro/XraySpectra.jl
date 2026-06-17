@@ -121,7 +121,7 @@ function read_background(path::AbstractString; T::Type = Float64)
     read_pha(path; T = T)
 end
 
-function read_spectrum(
+function read_dataset(
     path::AbstractString;
     read_response::Bool = true,
     read_ancillary::Bool = true,

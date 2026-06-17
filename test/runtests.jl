@@ -39,7 +39,7 @@ end
         FITSFiles.Card[FITSFiles.Card("EXPOSURE", 1.0)],
     )
 
-    spec = parse_hdu(PHA, fake_hdu)
+    spec = XraySpectra.parse_hdu(PHA, fake_hdu)
 
     @test spec.error_statistics == :numeric
     @test eltype(flux_axis(spec)) == Float64
@@ -85,7 +85,7 @@ end
         FITSFiles.Card[FITSFiles.Card("EXTNAME", "SPECRESP")],
     )
 
-    arf = parse_hdu(ARF, fake_hdu)
+    arf = XraySpectra.parse_hdu(ARF, fake_hdu)
 
     @test arf isa AncillaryResponse
     @test ancillary_bins(arf) == [1.0 2.0; 2.0 3.0; 3.0 4.0]
@@ -106,8 +106,8 @@ end
     @test !isfile(paths.background)
 end
 
-@testset "read_spectrum flags" begin
-    data = read_spectrum(NUSTAR_PHA; read_ancillary = false, read_background = false)
+@testset "read_dataset flags" begin
+    data = read_dataset(NUSTAR_PHA; read_ancillary = false, read_background = false)
 
     @test data.spectrum isa SingleSpectrum
     @test data.response isa ResponseMatrix
@@ -115,7 +115,7 @@ end
     @test isnothing(data.background)
     @test data.paths.response == NUSTAR_RMF
 
-    pha_only = read_spectrum(
+    pha_only = read_dataset(
         NUSTAR_PHA;
         read_response = false,
         read_ancillary = false,
@@ -128,7 +128,7 @@ end
     @test isnothing(pha_only.background)
 
     @test spectral_axis(read_background(NUSTAR_PHA)) == spectral_axis(read_pha(NUSTAR_PHA))
-    @test_throws ArgumentError read_spectrum(NUSTAR_PHA)
+    @test_throws ArgumentError read_dataset(NUSTAR_PHA)
 end
 
 @testset "PHA plus RMF energy bins" begin
