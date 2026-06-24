@@ -1,0 +1,6 @@
+[test_data]
+git-tree-sha1 = "99239cdff6f41c8762cd9f57f4ee495f5b53e708"
+
+    [[test_data.download]]
+    sha256 = "6f3fadb752abc4181bda01751827512f18d3aaafa63325d9c82a495f06c323d0"
+    url = "https://raw.githubusercontent.com/JuliaAstro/XraySpectra.jl/91083c3df412f6519a88ccbb73f98736a9ffc471/artifacts/xrayspectra-test-data.tar.gz"
