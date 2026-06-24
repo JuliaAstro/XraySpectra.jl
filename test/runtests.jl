@@ -137,6 +137,12 @@ end
     combined = zeros(2, 3)
     @test combine!(combined, response, arf) == expected_matrix
     @test combined == expected_matrix
+
+    sparse_combined = similar(response.matrix)
+    @test combine!(sparse_combined, response, arf) === sparse_combined
+    @test sparse_combined isa SparseMatrixCSC
+    @test Matrix(sparse_combined) == expected_matrix
+
     @test_throws ArgumentError combine!(zeros(1, 3), response, arf)
 
     @test fold(response, flux) == response.matrix * flux
@@ -158,6 +164,14 @@ end
 
     @test_throws ArgumentError combine(response, short_arf)
     @test_throws ArgumentError combine(response, shifted_arf)
+
+    try
+        combine(response, short_arf)
+    catch err
+        @test err isa ArgumentError
+        @test occursin("length(effective_area(arf)) != size(resp.matrix, 2)", err.msg)
+        @test occursin("(2 != 3)", err.msg)
+    end
 end
 
 @testset "NuSTAR response and ancillary" begin
