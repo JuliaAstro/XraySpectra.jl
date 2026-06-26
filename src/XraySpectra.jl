@@ -14,10 +14,13 @@ export read_paths_from_spectrum
 export ResponseMatrix, response_bins, channel_bins
 export response_bins_low, response_bins_high, channel_bins_low, channel_bins_high
 export response_energy, folded_energy, energy_binned_spectrum
+export arf_folded
 export AncillaryResponse, ancillary_bins, ancillary_bins_low, ancillary_bins_high, effective_area
 export combine, combine!, fold, fold!
+export channel_grouping, rebin_channels
 
 include("response.jl")
 include("ogip.jl")
+include("rebinning.jl")
 
 end # module XraySpectra

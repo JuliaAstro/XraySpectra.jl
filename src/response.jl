@@ -3,7 +3,15 @@ mutable struct ResponseMatrix{T}
     channels::Vector{Int}
     channel_bins::Matrix{T}
     bins::Matrix{T}
+    arf_folded::Bool
 end
+
+ResponseMatrix(
+    matrix::SparseMatrixCSC{T,Int},
+    channels::Vector{Int},
+    channel_bins::Matrix{T},
+    bins::Matrix{T},
+) where {T} = ResponseMatrix(matrix, channels, channel_bins, bins, false)
 
 struct AncillaryResponse{T}
     bins::Matrix{T}
@@ -34,11 +42,14 @@ ancillary_bins(arf::AncillaryResponse) = arf.bins
 ancillary_bins_low(arf::AncillaryResponse) = @view arf.bins[:, 1]
 ancillary_bins_high(arf::AncillaryResponse) = @view arf.bins[:, 2]
 effective_area(arf::AncillaryResponse) = arf.effective_area
+arf_folded(resp::ResponseMatrix) = resp.arf_folded
 
 _bins_match(left, right) = isapprox(left, right; rtol = 1e-5, atol = 1e-6)
 
 function _check_ancillary_compatible(resp::ResponseMatrix, arf::AncillaryResponse)
-    if length(effective_area(arf)) != size(resp.matrix, 2)
+    if arf_folded(resp)
+        throw(ArgumentError("Response matrix already has an ancillary response folded in."))
+    elseif length(effective_area(arf)) != size(resp.matrix, 2)
         throw(ArgumentError(
             "Ancillary response length must match the response matrix input bins: " *
             "length(effective_area(arf)) != size(resp.matrix, 2) " *

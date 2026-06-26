@@ -108,8 +108,10 @@ function read_rmf(path::AbstractString; T::Type = Float64)
         (hdr, _rmf, _channels)
     end
 
-    _build_response_matrix(header, rmf, channels, T)
+    _build_response_matrix(header, rmf, channels, T; arf_folded = _is_rsp(path))
 end
+
+_is_rsp(path::AbstractString) = lowercase(splitext(String(path))[2]) == ".rsp"
 
 function read_ancillary_response(path::AbstractString; T::Type = Float64)
     _read_fits_and_close(path) do fits
@@ -304,7 +306,8 @@ function _build_response_matrix(
     header::RMFHeader,
     rmf::RMFMatrix,
     channels::RMFChannels,
-    T::Type,
+    T::Type;
+    arf_folded::Bool = false,
 )
     R = build_response_matrix(
         rmf.f_chan,
@@ -319,6 +322,7 @@ function _build_response_matrix(
         channels.channels,
         hcat(channels.bins_low, channels.bins_high),
         hcat(rmf.bins_low, rmf.bins_high),
+        arf_folded,
     )
 end
 
