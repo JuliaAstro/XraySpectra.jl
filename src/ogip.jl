@@ -93,7 +93,7 @@ function parse_hdu(::Type{PHA}, hdu::FITSFiles.HDU; T::Type = Float64)
 end
 
 function read_rmf(path::AbstractString; T::Type = Float64)
-    (header, rmf, channels::RMFChannels{T}) = _read_fits_and_close(path) do fits
+    (header, rmf, channels::RMFChannels{T}, kind) = _read_fits_and_close(path) do fits
         rmf_index = findfirst(fits) do hdu
             extname = get(hdu.cards, "EXTNAME", "")
             occursin("RESP", extname) || occursin("MATRIX", extname)
@@ -105,13 +105,20 @@ function read_rmf(path::AbstractString; T::Type = Float64)
         hdr = parse_rmf_header(rmf_hdu)
         _rmf = read_rmf_matrix(rmf_hdu, hdr, T)
         _channels = read_rmf_channels(fits["EBOUNDS"], T)
-        (hdr, _rmf, _channels)
+        (hdr, _rmf, _channels, _response_kind(path, rmf_hdu))
     end
 
-    _build_response_matrix(header, rmf, channels, T; arf_folded = _is_rsp(path))
+    _build_response_matrix(header, rmf, channels, T; kind = kind)
 end
 
-_is_rsp(path::AbstractString) = lowercase(splitext(String(path))[2]) == ".rsp"
+function _response_kind(path::AbstractString, hdu::FITSFiles.HDU)
+    hduclas3 = uppercase(strip(String(get(hdu.cards, "HDUCLAS3", ""))))
+    if lowercase(splitext(String(path))[2]) == ".rsp" || hduclas3 == "FULL"
+        FullResponse
+    else
+        RedistributionResponse
+    end
+end
 
 function read_ancillary_response(path::AbstractString; T::Type = Float64)
     _read_fits_and_close(path) do fits
@@ -307,8 +314,8 @@ function _build_response_matrix(
     rmf::RMFMatrix,
     channels::RMFChannels,
     T::Type;
-    arf_folded::Bool = false,
-)
+    kind::Type{K} = RedistributionResponse,
+) where {K<:AbstractResponseKind}
     R = build_response_matrix(
         rmf.f_chan,
         rmf.n_chan,
@@ -322,7 +329,7 @@ function _build_response_matrix(
         channels.channels,
         hcat(channels.bins_low, channels.bins_high),
         hcat(rmf.bins_low, rmf.bins_high),
-        arf_folded,
+        kind,
     )
 end
 

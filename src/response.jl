@@ -1,9 +1,26 @@
-mutable struct ResponseMatrix{T}
+abstract type AbstractResponseKind end
+
+"""
+    RedistributionResponse
+
+A response matrix that only describes redistribution from model energy bins into
+detector channels. It can be combined with an ancillary response.
+"""
+struct RedistributionResponse <: AbstractResponseKind end
+
+"""
+    FullResponse
+
+A response matrix that already has the ancillary effective area folded in, such
+as an OGIP RSP file. It should not be combined with another ancillary response.
+"""
+struct FullResponse <: AbstractResponseKind end
+
+mutable struct ResponseMatrix{T,K<:AbstractResponseKind}
     matrix::SparseMatrixCSC{T,Int}
     channels::Vector{Int}
     channel_bins::Matrix{T}
     bins::Matrix{T}
-    arf_folded::Bool
 end
 
 ResponseMatrix(
@@ -11,7 +28,15 @@ ResponseMatrix(
     channels::Vector{Int},
     channel_bins::Matrix{T},
     bins::Matrix{T},
-) where {T} = ResponseMatrix(matrix, channels, channel_bins, bins, false)
+) where {T} = ResponseMatrix{T,RedistributionResponse}(matrix, channels, channel_bins, bins)
+
+ResponseMatrix(
+    matrix::SparseMatrixCSC{T,Int},
+    channels::Vector{Int},
+    channel_bins::Matrix{T},
+    bins::Matrix{T},
+    ::Type{K},
+) where {T,K<:AbstractResponseKind} = ResponseMatrix{T,K}(matrix, channels, channel_bins, bins)
 
 struct AncillaryResponse{T}
     bins::Matrix{T}
@@ -42,14 +67,18 @@ ancillary_bins(arf::AncillaryResponse) = arf.bins
 ancillary_bins_low(arf::AncillaryResponse) = @view arf.bins[:, 1]
 ancillary_bins_high(arf::AncillaryResponse) = @view arf.bins[:, 2]
 effective_area(arf::AncillaryResponse) = arf.effective_area
-arf_folded(resp::ResponseMatrix) = resp.arf_folded
+response_kind(::ResponseMatrix{T,K}) where {T,K} = K
+arf_folded(::ResponseMatrix) = false
+arf_folded(::ResponseMatrix{T,FullResponse}) where {T} = true
 
 _bins_match(left, right) = isapprox(left, right; rtol = 1e-5, atol = 1e-6)
 
+function _check_ancillary_compatible(resp::ResponseMatrix{T,FullResponse}, arf::AncillaryResponse) where {T}
+    throw(ArgumentError("Response matrix already has an ancillary response folded in."))
+end
+
 function _check_ancillary_compatible(resp::ResponseMatrix, arf::AncillaryResponse)
-    if arf_folded(resp)
-        throw(ArgumentError("Response matrix already has an ancillary response folded in."))
-    elseif length(effective_area(arf)) != size(resp.matrix, 2)
+    if length(effective_area(arf)) != size(resp.matrix, 2)
         throw(ArgumentError(
             "Ancillary response length must match the response matrix input bins: " *
             "length(effective_area(arf)) != size(resp.matrix, 2) " *
@@ -108,6 +137,10 @@ function combine(resp::ResponseMatrix, arf::AncillaryResponse)
     output = copy(resp.matrix)
     combine!(output, resp, arf)
     return output
+end
+
+function combine(resp::ResponseMatrix{T,FullResponse}, arf::AncillaryResponse) where {T}
+    _check_ancillary_compatible(resp, arf)
 end
 
 """

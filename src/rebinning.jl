@@ -11,6 +11,10 @@ function rebin_channels(obj; factor::Integer)
     rebin_channels(obj, channel_grouping(_channel_count(obj), factor))
 end
 
+function rebin_channels(data::NamedTuple; factor::Integer, kwargs...)
+    rebin_channels(data, channel_grouping(_channel_count(data), factor); kwargs...)
+end
+
 _channel_count(spec::SpectrumBase.AbstractSpectrum) = length(spec)
 _channel_count(resp::ResponseMatrix) = size(resp.matrix, 1)
 _channel_count(data::NamedTuple) = _channel_count(data.spectrum)
@@ -40,23 +44,44 @@ function _combine_quality(quality, first_index, last_index)
     any(!=(0), @view quality[first_index:last_index]) ? 1 : 0
 end
 
+_error_statistic(stats) = stats in (:poisson, :numeric) ? Val(stats) : Val(:unknown)
+_error_units(units) = units in (:counts, :rate) ? Val(units) : Val(:unknown)
+
 function _combine_errors(value, errors, stats, units, exposure_time, first_index, last_index)
-    if stats == :poisson
-        if units == :rate
-            counts = value * exposure_time
-            count_error(counts, 1.0) / exposure_time
-        else
-            count_error(value, 1.0)
-        end
-    elseif stats == :numeric
-        sqrt(sum(abs2, @view errors[first_index:last_index]))
-    else
-        zero(eltype(errors))
-    end
+    _combine_errors(
+        _error_statistic(stats),
+        value,
+        errors,
+        _error_units(units),
+        exposure_time,
+        first_index,
+        last_index,
+    )
+end
+
+function _combine_errors(::Val{:poisson}, value, errors, ::Val{:rate}, exposure_time, first_index, last_index)
+    counts = value * exposure_time
+    count_error(counts, 1.0) / exposure_time
+end
+
+function _combine_errors(::Val{:poisson}, value, errors, ::Val{:counts}, exposure_time, first_index, last_index)
+    count_error(value, 1.0)
+end
+
+function _combine_errors(::Val{:poisson}, value, errors, ::Val{:unknown}, exposure_time, first_index, last_index)
+    throw(ArgumentError("Cannot group Poisson errors without count or rate units."))
+end
+
+function _combine_errors(::Val{:numeric}, value, errors, units, exposure_time, first_index, last_index)
+    sqrt(sum(abs2, @view errors[first_index:last_index]))
+end
+
+function _combine_errors(::Val{:unknown}, value, errors, units, exposure_time, first_index, last_index)
+    zero(eltype(errors))
 end
 
 function _rebin_spectral_axis(axis::AbstractVector, spans)
-    [axis[first_index] for (_, first_index, _) in spans]
+    collect(1:length(spans))
 end
 
 function _rebin_spectral_axis(axis::AbstractMatrix, spans)
@@ -140,7 +165,7 @@ function rebin_channels(resp::ResponseMatrix, grouping)
     end
 
     rebinned_matrix = sparse(new_rows, new_cols, new_values, length(spans), size(resp.matrix, 2))
-    rebinned_channels = [resp.channels[first_index] for (_, first_index, _) in spans]
+    rebinned_channels = collect(1:length(spans))
 
     rebinned_channel_bins = Matrix{eltype(resp.channel_bins)}(undef, length(spans), 2)
     for (new_index, first_index, last_index) in spans
@@ -153,14 +178,27 @@ function rebin_channels(resp::ResponseMatrix, grouping)
         rebinned_channels,
         rebinned_channel_bins,
         copy(resp.bins),
-        arf_folded(resp),
+        response_kind(resp),
     )
 end
 
-function rebin_channels(data::NamedTuple, grouping)
+function rebin_channels(
+    data::NamedTuple,
+    grouping;
+    rebin_response::Bool = true,
+    rebin_background::Bool = true,
+)
     spectrum = rebin_channels(data.spectrum, grouping)
-    response = isnothing(data.response) ? nothing : rebin_channels(data.response, grouping)
-    background = isnothing(data.background) ? nothing : rebin_channels(data.background, grouping)
+    response = if rebin_response && !isnothing(data.response)
+        rebin_channels(data.response, grouping)
+    else
+        data.response
+    end
+    background = if rebin_background && !isnothing(data.background)
+        rebin_channels(data.background, grouping)
+    else
+        data.background
+    end
 
     merge(data, (;
         spectrum = spectrum,
