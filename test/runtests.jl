@@ -58,6 +58,8 @@ end
     response = read_rmf(NUSTAR_RMF)
 
     @test response isa ResponseMatrix
+    @test response_kind(response) == RedistributionResponse
+    @test !arf_folded(response)
     @test length(response.channels) == 4096
     @test first(response.channels) == 0
     @test last(response.channels) == 4095
@@ -83,6 +85,8 @@ end
     ginga = read_rmf(GINGA_RSP)
 
     @test exosat isa ResponseMatrix
+    @test response_kind(exosat) == FullResponse
+    @test arf_folded(exosat)
     @test size(exosat.matrix) == (128, 128)
     @test length(exosat.channels) == 128
     @test size(response_bins(exosat)) == (128, 2)
@@ -90,11 +94,16 @@ end
     @test nnz(exosat.matrix) > 0
 
     @test ginga isa ResponseMatrix
+    @test response_kind(ginga) == FullResponse
+    @test arf_folded(ginga)
     @test size(ginga.matrix) == (48, 700)
     @test length(ginga.channels) == 48
     @test size(response_bins(ginga)) == (700, 2)
     @test size(channel_bins(ginga)) == (48, 2)
     @test nnz(ginga.matrix) > 0
+
+    rsp_arf = AncillaryResponse(response_bins(exosat), ones(size(exosat.matrix, 2)))
+    @test_throws ArgumentError combine(exosat, rsp_arf)
 end
 
 @testset "ARF reader" begin
@@ -172,6 +181,133 @@ end
         @test occursin("length(effective_area(arf)) != size(resp.matrix, 2)", err.msg)
         @test occursin("(2 != 3)", err.msg)
     end
+end
+
+@testset "channel rebinning" begin
+    grouping = [1, 0, 1, 0]
+
+    @test channel_grouping(5, 2) == [1, 0, 1, 0, 1]
+    @test channel_grouping(4, 10) == [1, 0, 0, 0]
+    @test_throws ArgumentError channel_grouping(0, 2)
+    @test_throws ArgumentError channel_grouping(4, 0)
+
+    spec = SpectrumBase.Spectrum(
+        [0, 1, 2, 3],
+        [10.0, 20.0, 30.0, 40.0],
+        Dict{Symbol,Any}(
+            :quality => [0, 1, 0, 0],
+            :grouping => grouping,
+            :errors => [1.0, 2.0, 3.0, 4.0],
+            :error_statistics => :numeric,
+            :units => :counts,
+        ),
+    )
+    rebinned_spec = rebin_channels(spec, grouping)
+
+    @test spectral_axis(rebinned_spec) == [1, 2]
+    @test flux_axis(rebinned_spec) == [30.0, 70.0]
+    @test rebinned_spec.quality == [1, 0]
+    @test rebinned_spec.grouping == [1, 1]
+    @test rebinned_spec.errors ≈ [sqrt(5.0), 5.0]
+    @test rebinned_spec.channel_groups == [(1, 2), (3, 4)]
+    @test flux_axis(rebin_channels(spec, [1, -1, 1, -1])) == [30.0, 70.0]
+
+    poisson_spec = SpectrumBase.Spectrum(
+        [0, 1, 2, 3],
+        [1.0, 2.0, 3.0, 4.0],
+        Dict{Symbol,Any}(
+            :errors => zeros(4),
+            :error_statistics => :poisson,
+            :units => :counts,
+        ),
+    )
+    rebinned_poisson = rebin_channels(poisson_spec; factor = 2)
+
+    @test flux_axis(rebinned_poisson) == [3.0, 7.0]
+    @test rebinned_poisson.errors ≈ XraySpectra.count_error.(flux_axis(rebinned_poisson), 1.0)
+
+    poisson_rate_spec = SpectrumBase.Spectrum(
+        [0, 1],
+        [0.5, 1.5],
+        Dict{Symbol,Any}(
+            :errors => zeros(2),
+            :error_statistics => :poisson,
+            :units => :rate,
+            :exposure_time => 10.0,
+        ),
+    )
+    rebinned_poisson_rate = rebin_channels(poisson_rate_spec, [1, 0])
+
+    @test flux_axis(rebinned_poisson_rate) == [2.0]
+    @test only(rebinned_poisson_rate.errors) ≈ XraySpectra.count_error(20.0, 1.0) / 10.0
+
+    poisson_unknown_units = SpectrumBase.Spectrum(
+        [0, 1],
+        [1.0, 2.0],
+        Dict{Symbol,Any}(
+            :errors => zeros(2),
+            :error_statistics => :poisson,
+        ),
+    )
+
+    @test_throws ArgumentError rebin_channels(poisson_unknown_units, [1, 0])
+
+    binned_spec = SpectrumBase.Spectrum(
+        [0.1 0.2; 0.2 0.3; 0.3 0.4; 0.4 0.5],
+        [10.0, 20.0, 30.0, 40.0],
+        Dict{Symbol,Any}(),
+    )
+    rebinned_binned_spec = rebin_channels(binned_spec, grouping)
+
+    @test spectral_axis(rebinned_binned_spec) == [0.1 0.3; 0.3 0.5]
+    @test flux_axis(rebinned_binned_spec) == [30.0, 70.0]
+
+    response = ResponseMatrix(
+        sparse([1.0 0.0 2.0; 0.0 3.0 0.0; 4.0 0.0 5.0; 0.0 6.0 0.0]),
+        [0, 1, 2, 3],
+        [0.1 0.2; 0.2 0.3; 0.3 0.4; 0.4 0.5],
+        [1.0 2.0; 2.0 3.0; 3.0 4.0],
+        FullResponse,
+    )
+    rebinned_response = rebin_channels(response, grouping)
+
+    @test rebinned_response.matrix isa SparseMatrixCSC
+    @test Matrix(rebinned_response.matrix) == [1.0 3.0 2.0; 4.0 6.0 5.0]
+    @test rebinned_response.channels == [1, 2]
+    @test channel_bins(rebinned_response) == [0.1 0.3; 0.3 0.5]
+    @test response_bins(rebinned_response) == response_bins(response)
+    @test arf_folded(rebinned_response)
+    @test response_kind(rebinned_response) == FullResponse
+
+    ancillary = AncillaryResponse([1.0 2.0; 2.0 3.0; 3.0 4.0], [10.0, 20.0, 30.0])
+    data = (;
+        spectrum = spec,
+        response = response,
+        ancillary = ancillary,
+        background = spec,
+        paths = (; spectrum = "source.pha"),
+    )
+    rebinned_data = rebin_channels(data, grouping)
+
+    @test flux_axis(rebinned_data.spectrum) == [30.0, 70.0]
+    @test Matrix(rebinned_data.response.matrix) == [1.0 3.0 2.0; 4.0 6.0 5.0]
+    @test flux_axis(rebinned_data.background) == [30.0, 70.0]
+    @test rebinned_data.ancillary === ancillary
+    @test rebinned_data.paths === data.paths
+
+    spectrum_only_rebinned = rebin_channels(
+        data;
+        factor = 2,
+        rebin_response = false,
+        rebin_background = false,
+    )
+
+    @test flux_axis(spectrum_only_rebinned.spectrum) == [30.0, 70.0]
+    @test spectrum_only_rebinned.response === response
+    @test spectrum_only_rebinned.background === spec
+
+    @test_throws ArgumentError rebin_channels(response, [1, 0])
+    @test_throws ArgumentError rebin_channels(spec, [0, 1, 0, 1])
 end
 
 @testset "NuSTAR response and ancillary" begin
