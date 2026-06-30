@@ -8,7 +8,10 @@ using XraySpectra
 const TEST_DATA = artifact"test_data"
 const NUSTAR_PHA = joinpath(TEST_DATA, "nustar", "nu60001047002A01_sr_grp_simple.pha")
 const NUSTAR_RMF = joinpath(TEST_DATA, "nustar", "nu60001047002A01_sr.rmf")
+const NUSTAR_ARF = joinpath(TEST_DATA, "nustar", "nu60001047002A01_sr.arf")
 const CHANDRA_PHA2 = joinpath(TEST_DATA, "chandra", "acisf13839N002_pha2.fits")
+const EXOSAT_RSP = joinpath(TEST_DATA, "rsp", "s54405.rsp")
+const GINGA_RSP = joinpath(TEST_DATA, "rsp", "ginga_lac.rsp")
 
 @testset "PHA I reader" begin
     spec = read_pha(NUSTAR_PHA)
@@ -75,6 +78,25 @@ end
     @test folded_energy(response) == [channel_bins_low(response); channel_bins_high(response)[end]]
 end
 
+@testset "RSP reader" begin
+    exosat = read_rmf(EXOSAT_RSP)
+    ginga = read_rmf(GINGA_RSP)
+
+    @test exosat isa ResponseMatrix
+    @test size(exosat.matrix) == (128, 128)
+    @test length(exosat.channels) == 128
+    @test size(response_bins(exosat)) == (128, 2)
+    @test size(channel_bins(exosat)) == (128, 2)
+    @test nnz(exosat.matrix) > 0
+
+    @test ginga isa ResponseMatrix
+    @test size(ginga.matrix) == (48, 700)
+    @test length(ginga.channels) == 48
+    @test size(response_bins(ginga)) == (700, 2)
+    @test size(channel_bins(ginga)) == (48, 2)
+    @test nnz(ginga.matrix) > 0
+end
+
 @testset "ARF reader" begin
     fake_hdu = FITSFiles.HDU(
         (;
@@ -94,6 +116,78 @@ end
     @test effective_area(arf) == [10.0, 20.0, 30.0]
 end
 
+@testset "response folding" begin
+    response = ResponseMatrix(
+        sparse([1.0 2.0 0.0; 0.0 3.0 4.0]),
+        [1, 2],
+        [0.1 0.2; 0.2 0.3],
+        [1.0 2.0; 2.0 3.0; 3.0 4.0],
+    )
+    arf = AncillaryResponse(
+        [1.0 2.0; 2.0 3.0; 3.0 4.0],
+        [10.0, 20.0, 30.0],
+    )
+    flux = [1.0, 2.0, 3.0]
+
+    expected_matrix = [10.0 40.0 0.0; 0.0 60.0 120.0]
+
+    @test combine(response, arf) isa SparseMatrixCSC
+    @test Matrix(combine(response, arf)) == expected_matrix
+
+    combined = zeros(2, 3)
+    @test combine!(combined, response, arf) == expected_matrix
+    @test combined == expected_matrix
+
+    sparse_combined = similar(response.matrix)
+    @test combine!(sparse_combined, response, arf) === sparse_combined
+    @test sparse_combined isa SparseMatrixCSC
+    @test Matrix(sparse_combined) == expected_matrix
+
+    @test_throws ArgumentError combine!(zeros(1, 3), response, arf)
+
+    @test fold(response, flux) == response.matrix * flux
+    @test fold(response, flux; ancillary = arf) == expected_matrix * flux
+
+    output = zeros(2)
+    @test fold!(output, response, flux) == response.matrix * flux
+    @test output == response.matrix * flux
+
+    folded = zeros(2)
+    @test fold!(folded, response, flux; ancillary = arf) == expected_matrix * flux
+    @test folded == expected_matrix * flux
+
+    @test_throws ArgumentError fold(response, [1.0, 2.0])
+    @test_throws ArgumentError fold!(zeros(1), response, flux)
+
+    short_arf = AncillaryResponse([1.0 2.0; 2.0 3.0], [10.0, 20.0])
+    shifted_arf = AncillaryResponse([1.0 2.0; 2.0 3.0; 3.1 4.1], [10.0, 20.0, 30.0])
+
+    @test_throws ArgumentError combine(response, short_arf)
+    @test_throws ArgumentError combine(response, shifted_arf)
+
+    try
+        combine(response, short_arf)
+    catch err
+        @test err isa ArgumentError
+        @test occursin("length(effective_area(arf)) != size(resp.matrix, 2)", err.msg)
+        @test occursin("(2 != 3)", err.msg)
+    end
+end
+
+@testset "NuSTAR response and ancillary" begin
+    response = read_rmf(NUSTAR_RMF)
+    ancillary = read_ancillary_response(NUSTAR_ARF)
+
+    combined = combine(response, ancillary)
+    flux = ones(size(response.matrix, 2))
+
+    @test size(ancillary_bins(ancillary)) == size(response_bins(response))
+    @test length(effective_area(ancillary)) == size(response.matrix, 2)
+    @test size(combined) == size(response.matrix)
+    @test combined isa SparseMatrixCSC
+    @test fold(response, flux; ancillary = ancillary) == combined * flux
+end
+
 @testset "OGIP spectrum paths" begin
     paths = read_paths_from_spectrum(NUSTAR_PHA)
 
@@ -102,18 +196,19 @@ end
     @test basename(paths.ancillary) == "nu60001047002A01_sr.arf"
     @test basename(paths.background) == "nu60001047002A01_bk.pha"
     @test isfile(paths.response)
-    @test !isfile(paths.ancillary)
+    @test isfile(paths.ancillary)
     @test !isfile(paths.background)
 end
 
 @testset "read_dataset flags" begin
-    data = read_dataset(NUSTAR_PHA; read_ancillary = false, read_background = false)
+    data = read_dataset(NUSTAR_PHA; read_background = false)
 
     @test data.spectrum isa SingleSpectrum
     @test data.response isa ResponseMatrix
-    @test isnothing(data.ancillary)
+    @test data.ancillary isa AncillaryResponse
     @test isnothing(data.background)
     @test data.paths.response == NUSTAR_RMF
+    @test data.paths.ancillary == NUSTAR_ARF
 
     pha_only = read_dataset(
         NUSTAR_PHA;
@@ -128,7 +223,7 @@ end
     @test isnothing(pha_only.background)
 
     @test spectral_axis(read_background(NUSTAR_PHA)) == spectral_axis(read_pha(NUSTAR_PHA))
-    @test_throws ArgumentError read_dataset(NUSTAR_PHA)
+    @test_throws ArgumentError read_dataset(NUSTAR_PHA; read_background = true)
 end
 
 @testset "PHA plus RMF energy bins" begin
