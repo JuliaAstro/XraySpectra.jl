@@ -324,6 +324,26 @@ end
     @test fold(response, flux; ancillary = ancillary) == combined * flux
 end
 
+@testset "NuSTAR channel rebinning and folding" begin
+    data = read_dataset(NUSTAR_PHA; read_background = false)
+    flux = ones(size(data.response.matrix, 2))
+
+    folded = fold(data.response, flux; ancillary = data.ancillary)
+    @test length(folded) == length(data.spectrum)
+
+    rebinned = rebin_channels(data; factor = 16)
+    rebinned_folded = fold(rebinned.response, flux; ancillary = rebinned.ancillary)
+
+    @test length(rebinned.spectrum) == 256
+    @test size(rebinned.response.matrix) == (256, size(data.response.matrix, 2))
+    @test rebinned.ancillary === data.ancillary
+    @test length(rebinned_folded) == length(rebinned.spectrum)
+    @test sum(flux_axis(rebinned.spectrum)) == sum(flux_axis(data.spectrum))
+    @test channel_bins(rebinned.response)[1, 1] == channel_bins(data.response)[1, 1]
+    @test channel_bins(rebinned.response)[1, 2] == channel_bins(data.response)[16, 2]
+    @test channel_bins(rebinned.response)[end, 2] == channel_bins(data.response)[end, 2]
+end
+
 @testset "OGIP spectrum paths" begin
     paths = read_paths_from_spectrum(NUSTAR_PHA)
 

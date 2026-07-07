@@ -40,6 +40,15 @@ function _check_grouping_length(name, n, grouping)
     nothing
 end
 
+function _rebin_bins(bins, spans)
+    rebinned = Matrix{eltype(bins)}(undef, length(spans), 2)
+    for (new_index, first_index, last_index) in spans
+        rebinned[new_index, 1] = bins[first_index, 1]
+        rebinned[new_index, 2] = bins[last_index, 2]
+    end
+    rebinned
+end
+
 function _combine_quality(quality, first_index, last_index)
     any(!=(0), @view quality[first_index:last_index]) ? 1 : 0
 end
@@ -85,12 +94,7 @@ function _rebin_spectral_axis(axis::AbstractVector, spans)
 end
 
 function _rebin_spectral_axis(axis::AbstractMatrix, spans)
-    rebinned = Matrix{eltype(axis)}(undef, length(spans), 2)
-    for (new_index, first_index, last_index) in spans
-        rebinned[new_index, 1] = axis[first_index, 1]
-        rebinned[new_index, 2] = axis[last_index, 2]
-    end
-    rebinned
+    _rebin_bins(axis, spans)
 end
 
 function rebin_channels(spec::SpectrumBase.AbstractSpectrum, grouping)
