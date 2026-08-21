@@ -1,0 +1,36 @@
+name: Documentation
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: '*'
+
+jobs:
+  docs:
+    permissions:
+      contents: write
+      pull-requests: read
+      statuses: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v3
+      - name: Set up documentation environment
+        shell: julia --project=docs --color=yes {0}
+        run: |
+          import Pkg
+          Pkg.develop([
+              Pkg.PackageSpec(url="https://github.com/JuliaAstro/SpectrumBase.jl"),
+              Pkg.PackageSpec(url="https://github.com/JuliaAstro/FITSFiles.jl"),
+              Pkg.PackageSpec(path=pwd()),
+          ])
+          Pkg.instantiate()
+      - uses: julia-actions/julia-docdeploy@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}

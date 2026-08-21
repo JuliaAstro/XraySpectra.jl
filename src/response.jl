@@ -16,6 +16,13 @@ as an OGIP RSP file. It should not be combined with another ancillary response.
 """
 struct FullResponse <: AbstractResponseKind end
 
+"""
+    ResponseMatrix
+
+A sparse instrument response from model-energy bins (columns) to detector
+channels (rows). The response kind records whether an ancillary response has
+already been folded in.
+"""
 mutable struct ResponseMatrix{T,K<:AbstractResponseKind}
     matrix::SparseMatrixCSC{T,Int}
     channels::Vector{Int}
@@ -38,6 +45,12 @@ ResponseMatrix(
     ::Type{K},
 ) where {T,K<:AbstractResponseKind} = ResponseMatrix{T,K}(matrix, channels, channel_bins, bins)
 
+"""
+    AncillaryResponse
+
+An ancillary response containing low/high energy bins and the effective area
+for each bin.
+"""
 struct AncillaryResponse{T}
     bins::Matrix{T}
     effective_area::Vector{T}
@@ -50,7 +63,9 @@ Return the low/high energy bins for the input domain of the response matrix.
 """
 response_bins(resp::ResponseMatrix) = resp.bins
 
+"""Return the low edges of the response input-energy bins."""
 response_bins_low(resp::ResponseMatrix) = @view resp.bins[:, 1]
+"""Return the high edges of the response input-energy bins."""
 response_bins_high(resp::ResponseMatrix) = @view resp.bins[:, 2]
 
 """
@@ -60,14 +75,22 @@ Return the low/high channel-energy bins for the output domain of the response ma
 """
 channel_bins(resp::ResponseMatrix) = resp.channel_bins
 
+"""Return the low edges of the detector channel-energy bins."""
 channel_bins_low(resp::ResponseMatrix) = @view resp.channel_bins[:, 1]
+"""Return the high edges of the detector channel-energy bins."""
 channel_bins_high(resp::ResponseMatrix) = @view resp.channel_bins[:, 2]
 
+"""Return the low/high energy bins of an ancillary response."""
 ancillary_bins(arf::AncillaryResponse) = arf.bins
+"""Return the low edges of the ancillary response bins."""
 ancillary_bins_low(arf::AncillaryResponse) = @view arf.bins[:, 1]
+"""Return the high edges of the ancillary response bins."""
 ancillary_bins_high(arf::AncillaryResponse) = @view arf.bins[:, 2]
+"""Return the effective-area vector of an ancillary response."""
 effective_area(arf::AncillaryResponse) = arf.effective_area
+"""Return the response-kind type associated with a response matrix."""
 response_kind(::ResponseMatrix{T,K}) where {T,K} = K
+"""Return whether a response already includes its ancillary effective area."""
 arf_folded(::ResponseMatrix) = false
 arf_folded(::ResponseMatrix{T,FullResponse}) where {T} = true
 
@@ -213,6 +236,13 @@ of the response matrix. That is, the channel energies as used by the spectrum.
 """
 folded_energy(resp::ResponseMatrix) = [channel_bins_low(resp); channel_bins_high(resp)[end]]
 
+"""
+    energy_binned_spectrum(spectrum, response)
+
+Build a binned SpectrumBase spectrum by replacing PHA channel numbers with the
+matching EBOUNDS low/high energy bins. Original channel numbers are retained in
+the returned spectrum metadata.
+"""
 function energy_binned_spectrum(spec::SpectrumBase.AbstractSpectrum, resp::ResponseMatrix)
     channels = Int.(SpectrumBase.spectral_axis(spec))
     @assert issorted(resp.channels)
