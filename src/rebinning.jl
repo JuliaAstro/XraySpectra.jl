@@ -1,3 +1,9 @@
+"""
+    channel_grouping(n, factor)
+
+Create a grouping vector for `n` channels in adjacent groups of at most
+`factor` channels. A value of `1` starts each group.
+"""
 function channel_grouping(n::Integer, factor::Integer)
     n > 0 || throw(ArgumentError("Number of channels must be positive."))
     factor > 0 || throw(ArgumentError("Channel grouping factor must be positive."))
@@ -7,6 +13,14 @@ function channel_grouping(n::Integer, factor::Integer)
     grouping
 end
 
+"""
+    rebin_channels(object; factor)
+    rebin_channels(object, grouping)
+
+Combine adjacent detector channels in a spectrum, response matrix, or dataset.
+For a dataset, `rebin_response` and `rebin_background` control whether those
+companion products are also rebinned.
+"""
 function rebin_channels(obj; factor::Integer)
     rebin_channels(obj, channel_grouping(_channel_count(obj), factor))
 end

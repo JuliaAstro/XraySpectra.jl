@@ -34,6 +34,12 @@ struct RMFChannels{T}
     bins_high::Vector{T}
 end
 
+"""
+    read_pha(path; T=Float64)
+
+Read an OGIP PHA spectrum. The returned SpectrumBase spectrum uses detector
+channel numbers as its spectral axis.
+"""
 function read_pha(path; T::Type = Float64)
     fits = FITSFiles.fits(path)
     parse_hdu(PHA, fits[2]; T = T)
@@ -92,6 +98,11 @@ function parse_hdu(::Type{PHA}, hdu::FITSFiles.HDU; T::Type = Float64)
     SpectrumBase.Spectrum(channels, flux, meta)
 end
 
+"""
+    read_rmf(path; T=Float64)
+
+Read an OGIP RMF or RSP file into a [`ResponseMatrix`](@ref).
+"""
 function read_rmf(path::AbstractString; T::Type = Float64)
     (header, rmf, channels::RMFChannels{T}, kind) = _read_fits_and_close(path) do fits
         rmf_index = findfirst(fits) do hdu
@@ -120,16 +131,34 @@ function _response_kind(path::AbstractString, hdu::FITSFiles.HDU)
     end
 end
 
+"""
+    read_ancillary_response(path; T=Float64)
+
+Read an OGIP ARF file into an [`AncillaryResponse`](@ref).
+"""
 function read_ancillary_response(path::AbstractString; T::Type = Float64)
     _read_fits_and_close(path) do fits
         parse_hdu(ARF, fits["SPECRESP"]; T = T)
     end
 end
 
+"""
+    read_background(path; T=Float64)
+
+Read a background PHA spectrum using [`read_pha`](@ref).
+"""
 function read_background(path::AbstractString; T::Type = Float64)
     read_pha(path; T = T)
 end
 
+"""
+    read_dataset(path; read_response=true, read_ancillary=true,
+                 read_background=false, T=Float64)
+
+Read a PHA spectrum and optionally follow its OGIP companion-file headers.
+Return a named tuple containing `spectrum`, `response`, `ancillary`,
+`background`, and the resolved `paths`.
+"""
 function read_dataset(
     path::AbstractString;
     read_response::Bool = true,
@@ -200,6 +229,12 @@ function _read_fits_and_close(f, path)
     f(fits_file)
 end
 
+"""
+    read_paths_from_spectrum(path)
+
+Resolve the response, ancillary response, and background paths referenced by a
+PHA header without loading the companion arrays.
+"""
 function read_paths_from_spectrum(path::AbstractString)
     header = _read_fits_and_close(path) do fits
         fits[2].cards
