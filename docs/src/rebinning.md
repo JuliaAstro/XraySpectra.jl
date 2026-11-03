@@ -18,6 +18,18 @@ energy grid rather than the detector-channel grid.
 The last group may contain fewer channels when the original length is not
 divisible by the factor.
 
+## Rebin by minimum counts
+
+To group channels until each bin accumulates at least a target number of counts (useful for ensuring Poisson-to-Gaussian approximation for $\chi^2$ fitting):
+
+```julia
+rebinned = rebin_channels(data; min_counts = 20)
+```
+
+By default, any leftover channels at the end of the spectrum that do not reach `min_counts` are merged into the preceding group (`merge_trailing = true`). Pass `merge_trailing = false` to keep them as a distinct trailing group.
+
+When channel quality flags are present in the spectrum metadata, channels marked as bad (`quality != 0`) are excluded from count accumulation and isolated into separate bins (`ignore_bad = true`), preventing bad channels from contaminating good channels.
+
 ## Use an explicit grouping
 
 [`channel_grouping`](@ref) creates an OGIP-style grouping vector. A value of `1`

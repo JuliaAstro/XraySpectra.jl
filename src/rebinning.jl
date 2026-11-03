@@ -14,19 +14,156 @@ function channel_grouping(n::Integer, factor::Integer)
 end
 
 """
-    rebin_channels(object; factor)
+    channel_grouping(counts::AbstractVector; min_counts::Real, quality=nothing, merge_trailing::Bool=true)
+
+Create an OGIP-style grouping vector where adjacent channels are combined until each group
+accumulates at least `min_counts` counts.
+
+If `quality` is provided, channels flagged as bad (`quality != 0`) are excluded from count
+accumulation and isolated into separate groups so they do not contaminate good channels.
+
+A value of `1` starts each group. If `merge_trailing` is `true` (default), leftover channels
+at the end of the spectrum that do not reach `min_counts` are merged into the preceding group.
+"""
+function channel_grouping(
+    counts::AbstractVector{<:Real};
+    min_counts::Real,
+    quality::Union{AbstractVector{<:Integer},Nothing} = nothing,
+    merge_trailing::Bool = true,
+)
+    min_counts > 0 || throw(ArgumentError("min_counts must be positive."))
+    isempty(counts) && throw(ArgumentError("Channel counts vector cannot be empty."))
+    if !isnothing(quality) && length(quality) != length(counts)
+        throw(ArgumentError("quality length must match counts length: $(length(quality)) != $(length(counts))."))
+    end
+
+    n = length(counts)
+    grouping = zeros(Int, n)
+    grouping[1] = 1
+
+    accum = zero(eltype(counts))
+    last_group_start = 1
+    in_bad_group = !isnothing(quality) && quality[1] != 0
+
+    for i in 1:n
+        is_bad = !isnothing(quality) && quality[i] != 0
+
+        # Transition between good and bad channels: always start a new group boundary
+        if !isnothing(quality) && i > 1
+            was_bad = quality[i - 1] != 0
+            if is_bad != was_bad
+                grouping[i] = 1
+                last_group_start = i
+                accum = zero(eltype(counts))
+                in_bad_group = is_bad
+            end
+        end
+
+        if !is_bad
+            accum += counts[i]
+            if accum >= min_counts && i < n
+                next_is_bad = !isnothing(quality) && quality[i + 1] != 0
+                if !next_is_bad
+                    grouping[i + 1] = 1
+                    last_group_start = i + 1
+                    accum = zero(eltype(counts))
+                end
+            end
+        end
+    end
+
+    # If trailing good channels don't reach min_counts, merge them into previous good group
+    if merge_trailing && last_group_start > 1 && accum > 0 && accum < min_counts && !in_bad_group
+        prev_is_good = isnothing(quality) || quality[last_group_start - 1] == 0
+        if prev_is_good
+            grouping[last_group_start] = 0
+        end
+    end
+
+    grouping
+end
+
+"""
+    channel_grouping(spec::SpectrumBase.AbstractSpectrum; min_counts::Real, ignore_bad::Bool=true, merge_trailing::Bool=true)
+
+Create an OGIP grouping vector for a spectrum based on a minimum number of counts per bin.
+If `ignore_bad` is `true` (default) and quality metadata is present, bad channels (`quality != 0`)
+are excluded from count accumulation and isolated so good channels are not contaminated.
+If the spectrum is stored in count rates, the exposure time from metadata is used to recover counts.
+"""
+function channel_grouping(
+    spec::SpectrumBase.AbstractSpectrum;
+    min_counts::Real,
+    ignore_bad::Bool = true,
+    merge_trailing::Bool = true,
+)
+    flux = SpectrumBase.flux_axis(spec)
+    meta = SpectrumBase.meta(spec)
+    units = get(meta, :units, :counts)
+    quality = if ignore_bad && haskey(meta, :quality)
+        meta[:quality]
+    else
+        nothing
+    end
+
+    counts = if units == :rate
+        exposure = get(meta, :exposure_time, one(eltype(flux)))
+        flux .* exposure
+    else
+        flux
+    end
+
+    channel_grouping(
+        counts;
+        min_counts = min_counts,
+        quality = quality,
+        merge_trailing = merge_trailing,
+    )
+end
+
+channel_grouping(data::NamedTuple; kwargs...) = channel_grouping(data.spectrum; kwargs...)
+
+"""
+    rebin_channels(object; factor=nothing, min_counts=nothing, merge_trailing=true)
     rebin_channels(object, grouping)
 
 Combine adjacent detector channels in a spectrum, response matrix, or dataset.
 For a dataset, `rebin_response` and `rebin_background` control whether those
 companion products are also rebinned.
 """
-function rebin_channels(obj; factor::Integer)
-    rebin_channels(obj, channel_grouping(_channel_count(obj), factor))
+function rebin_channels(
+    obj;
+    factor::Union{Integer,Nothing} = nothing,
+    min_counts::Union{Real,Nothing} = nothing,
+    merge_trailing::Bool = true,
+)
+    if !isnothing(factor) && !isnothing(min_counts)
+        throw(ArgumentError("Cannot specify both `factor` and `min_counts`."))
+    elseif !isnothing(factor)
+        rebin_channels(obj, channel_grouping(_channel_count(obj), factor))
+    elseif !isnothing(min_counts)
+        rebin_channels(obj, channel_grouping(obj; min_counts = min_counts, merge_trailing = merge_trailing))
+    else
+        throw(ArgumentError("Must specify either `factor` or `min_counts`."))
+    end
 end
 
-function rebin_channels(data::NamedTuple; factor::Integer, kwargs...)
-    rebin_channels(data, channel_grouping(_channel_count(data), factor); kwargs...)
+function rebin_channels(
+    data::NamedTuple;
+    factor::Union{Integer,Nothing} = nothing,
+    min_counts::Union{Real,Nothing} = nothing,
+    merge_trailing::Bool = true,
+    kwargs...,
+)
+    if !isnothing(factor) && !isnothing(min_counts)
+        throw(ArgumentError("Cannot specify both `factor` and `min_counts`."))
+    elseif !isnothing(factor)
+        rebin_channels(data, channel_grouping(_channel_count(data), factor); kwargs...)
+    elseif !isnothing(min_counts)
+        rebin_channels(data, channel_grouping(data.spectrum; min_counts = min_counts, merge_trailing = merge_trailing); kwargs...)
+    else
+        throw(ArgumentError("Must specify either `factor` or `min_counts`."))
+    end
 end
 
 _channel_count(spec::SpectrumBase.AbstractSpectrum) = length(spec)
