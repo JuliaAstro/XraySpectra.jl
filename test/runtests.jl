@@ -343,6 +343,10 @@ end
     )
     rebinned_min_data = rebin_channels(min_data; min_counts = 20.0)
     @test flux_axis(rebinned_min_data.spectrum) == [23.0, 32.0]
+    @test_throws ArgumentError rebin_channels(test_spec)
+    @test_throws ArgumentError rebin_channels(test_spec; factor = 2, min_counts = 20.0)
+    @test_throws ArgumentError rebin_channels(min_data)
+    @test_throws ArgumentError rebin_channels(min_data; factor = 2, min_counts = 20.0)
 end
 
 @testset "NuSTAR response and ancillary" begin

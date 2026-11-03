@@ -81,40 +81,46 @@ end
 channel_grouping(data::NamedTuple; kwargs...) = channel_grouping(data.spectrum; kwargs...)
 
 """
-    rebin_channels(object; factor)
+    rebin_channels(object; factor=nothing, min_counts=nothing, merge_trailing=true)
     rebin_channels(object, grouping)
-    rebin_channels(spec; min_counts, merge_trailing=true)
-    rebin_channels(data; min_counts, merge_trailing=true, kwargs...)
 
 Combine adjacent detector channels in a spectrum, response matrix, or dataset.
 For a dataset, `rebin_response` and `rebin_background` control whether those
 companion products are also rebinned.
 """
-function rebin_channels(obj; factor::Integer)
-    rebin_channels(obj, channel_grouping(_channel_count(obj), factor))
-end
-
-function rebin_channels(data::NamedTuple; factor::Integer, kwargs...)
-    rebin_channels(data, channel_grouping(_channel_count(data), factor); kwargs...)
-end
-
 function rebin_channels(
-    spec::SpectrumBase.AbstractSpectrum;
-    min_counts::Real,
+    obj;
+    factor::Union{Integer,Nothing} = nothing,
+    min_counts::Union{Real,Nothing} = nothing,
     merge_trailing::Bool = true,
 )
-    grouping = channel_grouping(spec; min_counts = min_counts, merge_trailing = merge_trailing)
-    rebin_channels(spec, grouping)
+    if !isnothing(factor) && !isnothing(min_counts)
+        throw(ArgumentError("Cannot specify both `factor` and `min_counts`."))
+    elseif !isnothing(factor)
+        rebin_channels(obj, channel_grouping(_channel_count(obj), factor))
+    elseif !isnothing(min_counts)
+        rebin_channels(obj, channel_grouping(obj; min_counts = min_counts, merge_trailing = merge_trailing))
+    else
+        throw(ArgumentError("Must specify either `factor` or `min_counts`."))
+    end
 end
 
 function rebin_channels(
     data::NamedTuple;
-    min_counts::Real,
+    factor::Union{Integer,Nothing} = nothing,
+    min_counts::Union{Real,Nothing} = nothing,
     merge_trailing::Bool = true,
     kwargs...,
 )
-    grouping = channel_grouping(data.spectrum; min_counts = min_counts, merge_trailing = merge_trailing)
-    rebin_channels(data, grouping; kwargs...)
+    if !isnothing(factor) && !isnothing(min_counts)
+        throw(ArgumentError("Cannot specify both `factor` and `min_counts`."))
+    elseif !isnothing(factor)
+        rebin_channels(data, channel_grouping(_channel_count(data), factor); kwargs...)
+    elseif !isnothing(min_counts)
+        rebin_channels(data, channel_grouping(data.spectrum; min_counts = min_counts, merge_trailing = merge_trailing); kwargs...)
+    else
+        throw(ArgumentError("Must specify either `factor` or `min_counts`."))
+    end
 end
 
 _channel_count(spec::SpectrumBase.AbstractSpectrum) = length(spec)
