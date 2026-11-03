@@ -347,6 +347,21 @@ end
     @test_throws ArgumentError rebin_channels(test_spec; factor = 2, min_counts = 20.0)
     @test_throws ArgumentError rebin_channels(min_data)
     @test_throws ArgumentError rebin_channels(min_data; factor = 2, min_counts = 20.0)
+
+    # Minimum counts rebinning with bad channels
+    counts_with_bad = [10.0, 10.0, 50.0, 15.0, 15.0]
+    quality_flags = [0, 0, 1, 0, 0]
+    @test channel_grouping(counts_with_bad; min_counts = 20.0, quality = quality_flags) == [1, 0, 1, 1, 0]
+    @test_throws ArgumentError channel_grouping(counts_with_bad; min_counts = 20.0, quality = [0, 1])
+
+    spec_with_bad = SpectrumBase.Spectrum(
+        [0, 1, 2, 3, 4],
+        counts_with_bad,
+        Dict{Symbol,Any}(:quality => quality_flags, :units => :counts),
+    )
+    rebinned_bad_spec = rebin_channels(spec_with_bad; min_counts = 20.0)
+    @test flux_axis(rebinned_bad_spec) == [20.0, 50.0, 30.0]
+    @test rebinned_bad_spec.quality == [0, 1, 0]
 end
 
 @testset "NuSTAR response and ancillary" begin
