@@ -308,6 +308,41 @@ end
 
     @test_throws ArgumentError rebin_channels(response, [1, 0])
     @test_throws ArgumentError rebin_channels(spec, [0, 1, 0, 1])
+
+    # Minimum counts rebinning
+    sample_counts = [5.0, 10.0, 8.0, 25.0, 3.0, 4.0]
+    @test channel_grouping(sample_counts; min_counts = 20.0) == [1, 0, 0, 1, 0, 0]
+    @test channel_grouping(sample_counts; min_counts = 20.0, merge_trailing = false) == [1, 0, 0, 1, 1, 0]
+    @test_throws ArgumentError channel_grouping(sample_counts; min_counts = 0)
+    @test_throws ArgumentError channel_grouping(Float64[]; min_counts = 10)
+
+    test_spec = SpectrumBase.Spectrum(
+        [0, 1, 2, 3, 4, 5],
+        sample_counts,
+        Dict{Symbol,Any}(:units => :counts),
+    )
+    rebinned_min = rebin_channels(test_spec; min_counts = 20.0)
+    @test flux_axis(rebinned_min) == [23.0, 32.0]
+    @test spectral_axis(rebinned_min) == [1, 2]
+
+    test_rate_spec = SpectrumBase.Spectrum(
+        [0, 1, 2, 3, 4, 5],
+        sample_counts ./ 10.0,
+        Dict{Symbol,Any}(:units => :rate, :exposure_time => 10.0),
+    )
+    rebinned_rate_min = rebin_channels(test_rate_spec; min_counts = 20.0)
+    @test isapprox(flux_axis(rebinned_rate_min), [2.3, 3.2])
+    @test spectral_axis(rebinned_rate_min) == [1, 2]
+
+    min_data = (;
+        spectrum = test_spec,
+        response = nothing,
+        ancillary = nothing,
+        background = nothing,
+        paths = (; spectrum = "test.pha"),
+    )
+    rebinned_min_data = rebin_channels(min_data; min_counts = 20.0)
+    @test flux_axis(rebinned_min_data.spectrum) == [23.0, 32.0]
 end
 
 @testset "NuSTAR response and ancillary" begin

@@ -14,8 +14,77 @@ function channel_grouping(n::Integer, factor::Integer)
 end
 
 """
+    channel_grouping(counts::AbstractVector; min_counts::Real, merge_trailing::Bool=true)
+
+Create an OGIP-style grouping vector where adjacent channels are combined until each group
+accumulates at least `min_counts` counts.
+
+A value of `1` starts each group. If `merge_trailing` is `true` (default), leftover channels
+at the end of the spectrum that do not reach `min_counts` are merged into the preceding group.
+"""
+function channel_grouping(
+    counts::AbstractVector{<:Real};
+    min_counts::Real,
+    merge_trailing::Bool = true,
+)
+    min_counts > 0 || throw(ArgumentError("min_counts must be positive."))
+    isempty(counts) && throw(ArgumentError("Channel counts vector cannot be empty."))
+
+    n = length(counts)
+    grouping = zeros(Int, n)
+    grouping[1] = 1
+
+    accum = zero(eltype(counts))
+    last_group_start = 1
+
+    for i in 1:n
+        accum += counts[i]
+        if accum >= min_counts && i < n
+            grouping[i + 1] = 1
+            last_group_start = i + 1
+            accum = zero(eltype(counts))
+        end
+    end
+
+    if merge_trailing && last_group_start > 1 && accum < min_counts
+        grouping[last_group_start] = 0
+    end
+
+    grouping
+end
+
+"""
+    channel_grouping(spec::SpectrumBase.AbstractSpectrum; min_counts::Real, merge_trailing::Bool=true)
+
+Create an OGIP grouping vector for a spectrum based on a minimum number of counts per bin.
+If the spectrum is stored in count rates, the exposure time from metadata is used to recover counts.
+"""
+function channel_grouping(
+    spec::SpectrumBase.AbstractSpectrum;
+    min_counts::Real,
+    merge_trailing::Bool = true,
+)
+    flux = SpectrumBase.flux_axis(spec)
+    meta = SpectrumBase.meta(spec)
+    units = get(meta, :units, :counts)
+
+    counts = if units == :rate
+        exposure = get(meta, :exposure_time, one(eltype(flux)))
+        flux .* exposure
+    else
+        flux
+    end
+
+    channel_grouping(counts; min_counts = min_counts, merge_trailing = merge_trailing)
+end
+
+channel_grouping(data::NamedTuple; kwargs...) = channel_grouping(data.spectrum; kwargs...)
+
+"""
     rebin_channels(object; factor)
     rebin_channels(object, grouping)
+    rebin_channels(spec; min_counts, merge_trailing=true)
+    rebin_channels(data; min_counts, merge_trailing=true, kwargs...)
 
 Combine adjacent detector channels in a spectrum, response matrix, or dataset.
 For a dataset, `rebin_response` and `rebin_background` control whether those
@@ -27,6 +96,25 @@ end
 
 function rebin_channels(data::NamedTuple; factor::Integer, kwargs...)
     rebin_channels(data, channel_grouping(_channel_count(data), factor); kwargs...)
+end
+
+function rebin_channels(
+    spec::SpectrumBase.AbstractSpectrum;
+    min_counts::Real,
+    merge_trailing::Bool = true,
+)
+    grouping = channel_grouping(spec; min_counts = min_counts, merge_trailing = merge_trailing)
+    rebin_channels(spec, grouping)
+end
+
+function rebin_channels(
+    data::NamedTuple;
+    min_counts::Real,
+    merge_trailing::Bool = true,
+    kwargs...,
+)
+    grouping = channel_grouping(data.spectrum; min_counts = min_counts, merge_trailing = merge_trailing)
+    rebin_channels(data, grouping; kwargs...)
 end
 
 _channel_count(spec::SpectrumBase.AbstractSpectrum) = length(spec)
