@@ -75,6 +75,27 @@ separate ARF:
 data = read_dataset("source.pha"; read_ancillary = false)
 ```
 
+## Read PHA Type II (Multi-Spectrum files)
+
+Observations from grating instruments (such as Chandra HETG/LETG) or time-resolved
+measurements may be stored as OGIP PHA Type II files containing multiple spectra across rows.
+
+To load all spectra in the file as a `Vector`:
+
+```julia
+spectra = read_pha("chandra_pha2.fits")
+length(spectra) # e.g. 12
+```
+
+To load a specific spectrum by row number:
+
+```julia
+spec = read_pha("chandra_pha2.fits"; row = 3)
+```
+
+Row-specific table columns (such as diffraction order `spec.tg_m` or grating part `spec.tg_part`)
+and individual exposure times are captured in the spectrum metadata.
+
 ## Inspect linked paths
 
 Use [`read_paths_from_spectrum`](@ref) to resolve the companion paths without
