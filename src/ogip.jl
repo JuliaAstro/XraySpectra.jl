@@ -67,23 +67,31 @@ function _is_pha2(hdu::FITSFiles.HDU)
 end
 
 function _pha2_num_spectra(hdu::FITSFiles.HDU)
-    if haskey(hdu.data, :CHANNEL) && hdu.data.CHANNEL isa AbstractMatrix
-        return size(hdu.data.CHANNEL, 2)
-    elseif haskey(hdu.data, :COUNTS) && hdu.data.COUNTS isa AbstractMatrix
-        return size(hdu.data.COUNTS, 2)
-    elseif haskey(hdu.data, :RATE) && hdu.data.RATE isa AbstractMatrix
-        return size(hdu.data.RATE, 2)
+    if haskey(hdu.cards, "NAXIS2")
+        return _parse_any(Int, get(hdu.cards, "NAXIS2", 1))
     elseif haskey(hdu.data, :SPEC_NUM) && hdu.data.SPEC_NUM isa AbstractVector
         return length(hdu.data.SPEC_NUM)
+    elseif haskey(hdu.data, :CHANNEL) && hdu.data.CHANNEL isa AbstractMatrix
+        return min(size(hdu.data.CHANNEL)...)
+    elseif haskey(hdu.data, :COUNTS) && hdu.data.COUNTS isa AbstractMatrix
+        return min(size(hdu.data.COUNTS)...)
+    elseif haskey(hdu.data, :RATE) && hdu.data.RATE isa AbstractMatrix
+        return min(size(hdu.data.RATE)...)
     else
-        return _parse_any(Int, get(hdu.cards, "NAXIS2", 1))
+        return 1
     end
 end
 
 function _read_column_slice(::Type{T}, data, r::Integer, column::Symbol; table = "PHA") where {T}
     if data isa AbstractMatrix
-        1 <= r <= size(data, 2) || throw(BoundsError(data, (:, r)))
-        convert.(T, @view data[:, r])
+        if 1 <= r <= size(data, 1) && size(data, 1) <= size(data, 2)
+            # FITSFiles table binary column matrix has shape (N_rows, N_channels)
+            convert.(T, @view data[r, :])
+        elseif 1 <= r <= size(data, 2)
+            convert.(T, @view data[:, r])
+        else
+            throw(BoundsError(data, (r, :)))
+        end
     elseif data isa AbstractVector && eltype(data) <: AbstractVector
         1 <= r <= length(data) || throw(BoundsError(data, r))
         convert.(T, data[r])
@@ -147,7 +155,26 @@ function _parse_pha1(hdu::FITSFiles.HDU, T::Type)
     SpectrumBase.Spectrum(channels, flux, meta)
 end
 
-function _parse_pha2_row(hdu::FITSFiles.HDU, r::Integer, T::Type, num_spectra::Integer)
+function _extract_pha2_scalar_columns(hdu::FITSFiles.HDU, num_spectra::Integer)
+    column_names = keys(hdu.data)
+    scalar_cols = Dict{Symbol,Any}()
+    for col in column_names
+        col in (:CHANNEL, :COUNTS, :RATE, :QUALITY, :GROUPING, :STAT_ERR) && continue
+        val = hdu.data[col]
+        if val isa AbstractVector && !(eltype(val) <: AbstractVector) && length(val) == num_spectra
+            scalar_cols[Symbol(lowercase(string(col)))] = val
+        end
+    end
+    scalar_cols
+end
+
+function _parse_pha2_row(
+    hdu::FITSFiles.HDU,
+    r::Integer,
+    T::Type,
+    num_spectra::Integer,
+    scalar_cols::Dict{Symbol,Any} = _extract_pha2_scalar_columns(hdu, num_spectra),
+)
     column_names = keys(hdu.data)
     _require_column(column_names, :CHANNEL)
 
@@ -206,11 +233,8 @@ function _parse_pha2_row(hdu::FITSFiles.HDU, r::Integer, T::Type, num_spectra::I
         :row => r,
     )
 
-    for col in column_names
-        val = hdu.data[col]
-        if val isa AbstractVector && !(eltype(val) <: AbstractVector) && length(val) == num_spectra
-            meta[Symbol(lowercase(string(col)))] = val[r]
-        end
+    for (k, v) in scalar_cols
+        meta[k] = v[r]
     end
 
     SpectrumBase.Spectrum(channels, flux, meta)
@@ -224,11 +248,12 @@ function parse_hdu(
 )
     if _is_pha2(hdu)
         num_spectra = _pha2_num_spectra(hdu)
+        scalar_cols = _extract_pha2_scalar_columns(hdu, num_spectra)
         if row isa Integer
             1 <= row <= num_spectra || throw(BoundsError(1:num_spectra, row))
-            return _parse_pha2_row(hdu, row, T, num_spectra)
+            return _parse_pha2_row(hdu, row, T, num_spectra, scalar_cols)
         elseif isnothing(row) || row === (:)
-            return [_parse_pha2_row(hdu, r, T, num_spectra) for r in 1:num_spectra]
+            return [_parse_pha2_row(hdu, r, T, num_spectra, scalar_cols) for r in 1:num_spectra]
         else
             throw(ArgumentError("Invalid row argument: $row"))
         end
