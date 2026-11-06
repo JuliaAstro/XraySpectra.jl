@@ -35,11 +35,6 @@ struct RMFChannels{T}
 end
 
 """
-    read_pha(path; T=Float64)
-
-Read an OGIP PHA spectrum. The returned SpectrumBase spectrum uses detector
-channel numbers as its spectral axis.
-"""
     read_pha(path; T=Float64, row=nothing)
 
 Read an OGIP PHA spectrum. The returned SpectrumBase spectrum uses detector
