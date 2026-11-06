@@ -35,17 +35,74 @@ struct RMFChannels{T}
 end
 
 """
-    read_pha(path; T=Float64)
+    read_pha(path; T=Float64, row=nothing)
 
 Read an OGIP PHA spectrum. The returned SpectrumBase spectrum uses detector
 channel numbers as its spectral axis.
+
+For PHA Type II files (which contain multiple spectra in table rows):
+- Pass `row = n` to load a single spectrum from row `n` (e.g. `row = 1`).
+- Omit `row` (or pass `row = nothing` or `row = :`) to load a `Vector` of all spectra.
 """
-function read_pha(path; T::Type = Float64)
+function read_pha(path; T::Type = Float64, row::Union{Integer,Colon,Nothing} = nothing)
     fits = FITSFiles.fits(path)
-    parse_hdu(PHA, fits[2]; T = T)
+    parse_hdu(PHA, fits[2]; T = T, row = row)
 end
 
-function parse_hdu(::Type{PHA}, hdu::FITSFiles.HDU; T::Type = Float64)
+function _is_pha2(hdu::FITSFiles.HDU)
+    hduclas4 = uppercase(strip(String(get(hdu.cards, "HDUCLAS4", ""))))
+    if occursin("TYPE:II", hduclas4)
+        return true
+    end
+    if haskey(hdu.data, :CHANNEL) && hdu.data.CHANNEL isa AbstractMatrix
+        return true
+    end
+    if haskey(hdu.data, :COUNTS) && hdu.data.COUNTS isa AbstractMatrix
+        return true
+    end
+    if haskey(hdu.data, :RATE) && hdu.data.RATE isa AbstractMatrix
+        return true
+    end
+    false
+end
+
+function _pha2_num_spectra(hdu::FITSFiles.HDU)
+    if haskey(hdu.cards, "NAXIS2")
+        return _parse_any(Int, get(hdu.cards, "NAXIS2", 1))
+    elseif haskey(hdu.data, :SPEC_NUM) && hdu.data.SPEC_NUM isa AbstractVector
+        return length(hdu.data.SPEC_NUM)
+    elseif haskey(hdu.data, :CHANNEL) && hdu.data.CHANNEL isa AbstractMatrix
+        return min(size(hdu.data.CHANNEL)...)
+    elseif haskey(hdu.data, :COUNTS) && hdu.data.COUNTS isa AbstractMatrix
+        return min(size(hdu.data.COUNTS)...)
+    elseif haskey(hdu.data, :RATE) && hdu.data.RATE isa AbstractMatrix
+        return min(size(hdu.data.RATE)...)
+    else
+        return 1
+    end
+end
+
+function _read_column_slice(::Type{T}, data, r::Integer, column::Symbol; table = "PHA") where {T}
+    if data isa AbstractMatrix
+        if 1 <= r <= size(data, 1) && size(data, 1) <= size(data, 2)
+            # FITSFiles table binary column matrix has shape (N_rows, N_channels)
+            convert.(T, @view data[r, :])
+        elseif 1 <= r <= size(data, 2)
+            convert.(T, @view data[:, r])
+        else
+            throw(BoundsError(data, (r, :)))
+        end
+    elseif data isa AbstractVector && eltype(data) <: AbstractVector
+        1 <= r <= length(data) || throw(BoundsError(data, r))
+        convert.(T, data[r])
+    elseif data isa AbstractVector
+        convert.(T, data)
+    else
+        throw(ArgumentError("$table column $column must be a vector or matrix"))
+    end
+end
+
+function _parse_pha1(hdu::FITSFiles.HDU, T::Type)
     column_names = keys(hdu.data)
     _require_column(column_names, :CHANNEL)
 
@@ -98,6 +155,116 @@ function parse_hdu(::Type{PHA}, hdu::FITSFiles.HDU; T::Type = Float64)
     SpectrumBase.Spectrum(channels, flux, meta)
 end
 
+function _extract_pha2_scalar_columns(hdu::FITSFiles.HDU, num_spectra::Integer)
+    column_names = keys(hdu.data)
+    scalar_cols = Dict{Symbol,Any}()
+    for col in column_names
+        col in (:CHANNEL, :COUNTS, :RATE, :QUALITY, :GROUPING, :STAT_ERR) && continue
+        val = hdu.data[col]
+        if val isa AbstractVector && !(eltype(val) <: AbstractVector) && length(val) == num_spectra
+            scalar_cols[Symbol(lowercase(string(col)))] = val
+        end
+    end
+    scalar_cols
+end
+
+function _parse_pha2_row(
+    hdu::FITSFiles.HDU,
+    r::Integer,
+    T::Type,
+    num_spectra::Integer,
+    scalar_cols::Dict{Symbol,Any} = _extract_pha2_scalar_columns(hdu, num_spectra),
+)
+    column_names = keys(hdu.data)
+    _require_column(column_names, :CHANNEL)
+
+    channels = _read_column_slice(Int, hdu.data.CHANNEL, r, :CHANNEL)
+    values, units = if :RATE in column_names
+        _read_column_slice(T, hdu.data.RATE, r, :RATE), :rate
+    else
+        _require_column(column_names, :COUNTS)
+        _read_column_slice(T, hdu.data.COUNTS, r, :COUNTS), :counts
+    end
+
+    quality = if :QUALITY in column_names
+        _read_column_slice(Int, hdu.data.QUALITY, r, :QUALITY)
+    else
+        zeros(Int, length(channels))
+    end
+
+    grouping = if :GROUPING in column_names
+        _read_column_slice(Int, hdu.data.GROUPING, r, :GROUPING)
+    else
+        ones(Int, length(channels))
+    end
+
+    is_poisson = _string_boolean(get(hdu.cards, "POISSERR", false))
+    flux, error_statistics, errors = if :STAT_ERR in column_names
+        stat_err = _read_column_slice(T, hdu.data.STAT_ERR, r, :STAT_ERR)
+        values, :numeric, stat_err
+    elseif is_poisson
+        values, :poisson, @. T(count_error(values, 1.0))
+    else
+        values, :unknown, zeros(T, length(values))
+    end
+
+    exposure_time = if haskey(hdu.data, :EXPOSURE) && hdu.data.EXPOSURE isa AbstractVector && length(hdu.data.EXPOSURE) == num_spectra
+        T(hdu.data.EXPOSURE[r])
+    elseif haskey(hdu.cards, "EXPOSUR$r")
+        T(get(hdu.cards, "EXPOSUR$r"))
+    else
+        T(_get_exposure_time(hdu.cards))
+    end
+
+    meta = Dict{Symbol,Any}(
+        :quality => quality,
+        :grouping => grouping,
+        :units => units,
+        :errors => errors,
+        :error_statistics => error_statistics,
+        :poisson_errors => is_poisson,
+        :exposure_time => exposure_time,
+        :background_scale => _get_stable(T, hdu.cards, "BACKSCAL", one(T)),
+        :area_scale => _get_stable(T, hdu.cards, "AREASCAL", one(T)),
+        :systematic_error => _get_stable(T, hdu.cards, "SYS_ERR", zero(T)),
+        :telescope => strip(String(get(hdu.cards, "TELESCOP", ""))),
+        :instrument => strip(String(get(hdu.cards, "INSTRUME", ""))),
+        :cards => hdu.cards,
+        :row => r,
+    )
+
+    for (k, v) in scalar_cols
+        meta[k] = v[r]
+    end
+
+    SpectrumBase.Spectrum(channels, flux, meta)
+end
+
+function parse_hdu(
+    ::Type{PHA},
+    hdu::FITSFiles.HDU;
+    T::Type = Float64,
+    row::Union{Integer,Colon,Nothing} = nothing,
+)
+    if _is_pha2(hdu)
+        num_spectra = _pha2_num_spectra(hdu)
+        scalar_cols = _extract_pha2_scalar_columns(hdu, num_spectra)
+        if row isa Integer
+            1 <= row <= num_spectra || throw(BoundsError(1:num_spectra, row))
+            return _parse_pha2_row(hdu, row, T, num_spectra, scalar_cols)
+        elseif isnothing(row) || row === (:)
+            return [_parse_pha2_row(hdu, r, T, num_spectra, scalar_cols) for r in 1:num_spectra]
+        else
+            throw(ArgumentError("Invalid row argument: $row"))
+        end
+    else
+        if row isa Integer && row != 1
+            throw(BoundsError(1:1, row))
+        end
+        return _parse_pha1(hdu, T)
+    end
+end
+
 """
     read_rmf(path; T=Float64)
 
@@ -147,13 +314,13 @@ end
 
 Read a background PHA spectrum using [`read_pha`](@ref).
 """
-function read_background(path::AbstractString; T::Type = Float64)
-    read_pha(path; T = T)
+function read_background(path::AbstractString; T::Type = Float64, row::Union{Integer,Colon,Nothing} = nothing)
+    read_pha(path; T = T, row = row)
 end
 
 """
     read_dataset(path; read_response=true, read_ancillary=true,
-                 read_background=false, T=Float64)
+                 read_background=false, T=Float64, row=nothing)
 
 Read a PHA spectrum and optionally follow its OGIP companion-file headers.
 Return a named tuple containing `spectrum`, `response`, `ancillary`,
@@ -165,9 +332,10 @@ function read_dataset(
     read_ancillary::Bool = true,
     read_background::Bool = false,
     T::Type = Float64,
+    row::Union{Integer,Colon,Nothing} = nothing,
 )
     paths = read_paths_from_spectrum(path)
-    spectrum = read_pha(path; T = T)
+    spectrum = read_pha(path; T = T, row = row)
 
     response = if read_response
         response_path = _required_ogip_file(paths.response, "response")
@@ -185,7 +353,7 @@ function read_dataset(
 
     background = if read_background
         background_path = _required_ogip_file(paths.background, "background")
-        read_pha(background_path; T = T)
+        read_pha(background_path; T = T, row = row)
     else
         nothing
     end

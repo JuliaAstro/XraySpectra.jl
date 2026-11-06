@@ -50,8 +50,45 @@ end
     @test spec.errors == fake_hdu.data.STAT_ERR
 end
 
-@testset "PHA II is out of scope for now" begin
-    @test_throws ArgumentError read_pha(CHANDRA_PHA2)
+@testset "PHA II reader" begin
+    # Read entire PHA II dataset (all spectra)
+    spectra = read_pha(CHANDRA_PHA2)
+    @test spectra isa Vector
+    @test length(spectra) == 12
+    @test all(s -> s isa SingleSpectrum, spectra)
+    @test all(s -> length(s) == 8192, spectra)
+
+    first_spec = first(spectra)
+    @test first_spec.telescope == "CHANDRA"
+    @test first_spec.instrument == "ACIS"
+    @test first_spec.units == :counts
+    @test first_spec.error_statistics == :numeric
+    @test length(first_spec.errors) == 8192
+    @test first_spec.row == 1
+    @test first_spec.tg_m == -3
+    @test first_spec.tg_part == 1
+
+    # Read specific row
+    spec3 = read_pha(CHANDRA_PHA2; row = 3)
+    @test spec3 isa SingleSpectrum
+    @test length(spec3) == 8192
+    @test spec3.row == 3
+    @test flux_axis(spec3) == flux_axis(spectra[3])
+    @test spec3.tg_m == -1
+    @test spec3.tg_part == 1
+
+    # Out of bounds row
+    @test_throws BoundsError read_pha(CHANDRA_PHA2; row = 0)
+    @test_throws BoundsError read_pha(CHANDRA_PHA2; row = 13)
+
+    # PHA I file should reject row > 1
+    @test_throws BoundsError read_pha(NUSTAR_PHA; row = 2)
+
+    # Dataset loader with row selection
+    ds = read_dataset(CHANDRA_PHA2; read_response = false, read_ancillary = false, row = 4)
+    @test ds.spectrum isa SingleSpectrum
+    @test ds.spectrum.row == 4
+    @test ds.spectrum.tg_m == 1
 end
 
 @testset "RMF reader" begin
