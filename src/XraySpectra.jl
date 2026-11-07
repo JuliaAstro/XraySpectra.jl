@@ -18,7 +18,7 @@ export response_energy, folded_energy, energy_binned_spectrum
 export arf_folded
 export AncillaryResponse, ancillary_bins, ancillary_bins_low, ancillary_bins_high, effective_area
 export combine, combine!, fold, fold!
-export channel_grouping, rebin_channels
+export channel_grouping, rebin_channels, calculate_areanorm
 
 include("response.jl")
 include("ogip.jl")
