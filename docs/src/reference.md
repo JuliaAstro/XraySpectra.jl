@@ -49,4 +49,5 @@ fold!
 ```@docs
 channel_grouping
 rebin_channels
+calculate_areanorm
 ```
