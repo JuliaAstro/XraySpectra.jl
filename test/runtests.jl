@@ -362,6 +362,93 @@ end
     rebinned_bad_spec = rebin_channels(spec_with_bad; min_counts = 20.0)
     @test flux_axis(rebinned_bad_spec) == [20.0, 50.0, 30.0]
     @test rebinned_bad_spec.quality == [0, 1, 0]
+
+    # Minimum signal-to-noise ratio (S/N) rebinning
+    sn_src = [50.0, 50.0, 10.0, 10.0, 100.0]
+    sn_bg  = [10.0, 10.0, 5.0,  5.0,  20.0]
+
+    # For min_sn = 6.0, areanorm = 1.0:
+    # Ch 1: S/N ≈ 5.16 < 6.0
+    # Ch 1+2: S/N ≈ 7.30 >= 6.0 -> starts group 2 at ch 3
+    # Ch 3: S/N ≈ 1.29 < 6.0
+    # Ch 3+4: S/N ≈ 1.83 < 6.0
+    # Ch 3+4+5: S/N ≈ 7.35 >= 6.0
+    g_sn = channel_grouping(sn_src, sn_bg; min_sn = 6.0, areanorm = 1.0)
+    @test g_sn == [1, 0, 1, 0, 0]
+
+    # Test with areanorm = 0.5:
+    # Ch 1: S/N ≈ 6.21 >= 6.0 -> starts group 2 at ch 2
+    # Ch 2: S/N ≈ 6.21 >= 6.0 -> starts group 3 at ch 3
+    # Ch 3+4+5: S/N ≈ 9.30 >= 6.0
+    g_sn_a05 = channel_grouping(sn_src, sn_bg; min_sn = 6.0, areanorm = 0.5)
+    @test g_sn_a05 == [1, 1, 1, 0, 0]
+
+    # Vector areanorm:
+    sn_a_vec = [1.0, 1.0, 1.0, 1.0, 1.0]
+    @test channel_grouping(sn_src, sn_bg; min_sn = 6.0, areanorm = sn_a_vec) == [1, 0, 1, 0, 0]
+
+    # Bad channels isolation:
+    sn_qual = [0, 0, 1, 0, 0]
+    g_sn_qual = channel_grouping(sn_src, sn_bg; min_sn = 6.0, areanorm = 1.0, quality = sn_qual)
+    @test g_sn_qual[3] == 1
+    @test g_sn_qual[4] == 1
+
+    # Trailing merge:
+    sn_src_trail = [100.0, 1.0]
+    sn_bg_trail  = [10.0, 1.0]
+    @test channel_grouping(sn_src_trail, sn_bg_trail; min_sn = 6.0, merge_trailing = true) == [1, 0]
+    @test channel_grouping(sn_src_trail, sn_bg_trail; min_sn = 6.0, merge_trailing = false) == [1, 1]
+
+    # Spectra overloads and calculate_areanorm:
+    sn_src_spec = SpectrumBase.Spectrum(
+        collect(1:5),
+        sn_src,
+        Dict{Symbol,Any}(
+            :units => :counts,
+            :background_scale => 1.0,
+            :area_scale => 1.0,
+            :exposure_time => 1000.0,
+        ),
+    )
+    sn_bg_spec = SpectrumBase.Spectrum(
+        collect(1:5),
+        sn_bg,
+        Dict{Symbol,Any}(
+            :units => :counts,
+            :background_scale => 2.0,
+            :area_scale => 1.0,
+            :exposure_time => 1000.0,
+        ),
+    )
+    # areanorm = (1.0 * 1.0 * 1000) / (2.0 * 1.0 * 1000) = 0.5
+    @test calculate_areanorm(sn_src_spec, sn_bg_spec) == 0.5
+    @test channel_grouping(sn_src_spec, sn_bg_spec; min_sn = 6.0) == g_sn_a05
+
+    # rebin_channels on Spectrum:
+    rebinned_sn_src = rebin_channels(sn_src_spec; min_sn = 6.0, background = sn_bg_spec)
+    @test rebinned_sn_src isa SpectrumBase.Spectrum
+    @test length(rebinned_sn_src) == count(==(1), g_sn_a05)
+
+    # rebin_channels on Dataset:
+    sn_dataset = (;
+        spectrum = sn_src_spec,
+        response = nothing,
+        ancillary = nothing,
+        background = sn_bg_spec,
+        paths = (; spectrum = "test_src.pha", background = "test_bg.pha"),
+    )
+    rebinned_sn_ds = rebin_channels(sn_dataset; min_sn = 6.0)
+    @test length(rebinned_sn_ds.spectrum) == count(==(1), g_sn_a05)
+    @test length(rebinned_sn_ds.background) == count(==(1), g_sn_a05)
+
+    # Error validations:
+    @test_throws ArgumentError channel_grouping(sn_src, sn_bg; min_sn = 0.0)
+    @test_throws ArgumentError channel_grouping(sn_src, sn_bg[1:4]; min_sn = 6.0)
+    @test_throws ArgumentError channel_grouping(sn_src, sn_bg; min_sn = 6.0, areanorm = -0.5)
+    @test_throws ArgumentError rebin_channels(sn_src_spec; min_sn = 6.0)
+    @test_throws ArgumentError rebin_channels(sn_src_spec; factor = 2, min_sn = 6.0)
+    @test_throws ArgumentError rebin_channels(sn_dataset; min_counts = 20.0, min_sn = 6.0)
+    @test_throws ArgumentError rebin_channels((; spectrum = sn_src_spec, background = nothing); min_sn = 6.0)
 end
 
 @testset "NuSTAR response and ancillary" begin
